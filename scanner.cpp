@@ -6,7 +6,25 @@
 #include <unistd.h>
 
 char[] isOpen(int sockfd, const char* ip_addr, int port) {
-    
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port)
+    // Check if IP is valid 
+    if (inet_pton(AF_INET, ip_string, &server_addr.sin_addr) < 1) {
+        std::cout << "IP address given is invalid, for port: " << port << std::endl;
+        return NULL;
+    }
+
+    const char* message = "Knock Knock.";
+    struct timaval timeout;
+    ssize_t send_msg = sendto(sockfd, message, strlen(message), 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    if (send_msg < 0) {
+        std::cout << "Failed to send message, for port:" << port << std::endl;
+        return NULL;
+    }
+
+    fd
 }
 
 int main(int argc, char *argv[]) {
@@ -42,7 +60,8 @@ int main(int argc, char *argv[]) {
     }
 
     for (int port = low_port; port <= high_port; port++) {
-        if isOpen(sockfd, ip_addr, port)
+        n = isOpen(sockfd, server_addr, port);
+
     }
 
     

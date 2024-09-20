@@ -24,7 +24,18 @@ char[] isOpen(int sockfd, const char* ip_addr, int port) {
         return NULL;
     }
 
-    fd
+    // Create file descriptor set for select
+    fd_set read_fds;
+    FD_SET(sockfd, &read_fds);
+    
+    // Set timeout so we do't wait forever
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+
+    int n = select(sockfd + 1, &read_fds, 0, 0, &timeout); // select socket to see if it's ready to read
+    // If socket ready too read we can read the incoming message
+
+    
 }
 
 int main(int argc, char *argv[]) {
@@ -47,7 +58,7 @@ int main(int argc, char *argv[]) {
         std::cout << "Both ports must be a number between 0 and 65535." << std::endl;
         exit(1);
     }
-    if (port < 1 || port > 65535) {
+    if (low_port < 1 || low_port > 65535 || high_port < 1 || high_port > 65535) {
         std::cout << "Both ports must be a number between 0 and 65535" << std::endl;
         exit(1);
     }

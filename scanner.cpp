@@ -34,8 +34,8 @@ bool isOpen(int sockfd, const char* ip_addr, int port) {
     
     // Create timeout for select
     struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500000;
 
     int n = select(sockfd + 1, &read_fds, NULL, NULL, &timeout); // select socket to see if it's ready to read
 

@@ -4,11 +4,14 @@
 #include <arpa/inet.h>
 #include <iostream>
 #include <unistd.h>
+#include <cstdint>  // for uint8_t
+
 
 int main(int argc, char *argv[]) {
     // Check argument count
     if (argc != 6) {
-        std::cout << "Incorrect number of arguments: Should be 6." << std::endl;
+        std::cout << "Incorrect number of arguments: Should be 5." << std::endl;
+        exit(1);
     }
     char* ip_addr = argv[1];
     // Port 1 to 4 should solve be used solve puzzles 1 to 4 respectively
@@ -30,7 +33,10 @@ int main(int argc, char *argv[]) {
         std::cout << "All ports must be a number between 0 and 65535." << std::endl;
         exit(1);
     }
-    if (low_port < 1 || low_port > 65535 || high_port < 1 || high_port > 65535) {
+    if (port_1 < 1 || port_1 > 65535 || 
+        port_2 < 1 || port_2 > 65535 || 
+        port_3 < 1 || port_3 > 65535 ||
+        port_4 < 1 || port_4 > 65535) {
         std::cout << "All ports must be a number between 0 and 65535" << std::endl;
         exit(1);
     }
@@ -38,7 +44,7 @@ int main(int argc, char *argv[]) {
     // Create socket
     int sockfd; 
     if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        perror("Failed to create socket.");
+        std::cout << "Failed to create socket." << std::endl;
         exit(1);
     }
 
@@ -54,23 +60,44 @@ int main(int argc, char *argv[]) {
     // Create a server address with port 1
     struct sockaddr_in server_addr_1;
     memset(&server_addr_1, 0, sizeof(server_addr_1));
-    server_addr1.sin_family = AF_INET;
-    server_addr.sin_port = htons(port_1); // htons for network byte order
+    server_addr_1.sin_family = AF_INET;
+    server_addr_1.sin_port = htons(port_1); // htons for network byte order
 
     // Check if IP is valid 
-    if (inet_pton(AF_INET, ip_addr, &server_addr.sin_addr) < 1) {
-        std::cout << "IP address given is invalid, for port: " << port << std::endl;
+    if (inet_pton(AF_INET, ip_addr, &server_addr_1.sin_addr) < 1) {
+        std::cout << "IP address given is invalid, for port: " << port_1 << std::endl;
         exit(1);
     }
     
     // Create single unsigned message containing group number to send to server at port 1
-    std::uint_8_t message = 47;
-    ssize_t send_msg = sendto(sockfd, message, , 0, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    std::uint8_t message = 47;
+    ssize_t send_msg = sendto(sockfd, &message, 1, 0, (struct sockaddr *)&server_addr_1, sizeof(server_addr_1));
     if (send_msg < 0) {
         std::cout << "Failed to send message, for port 1:" << port_1 << std::endl;
-        exit(1)
+        exit(1);
     }
 
+    fd_set read_fds;
+    FD_SET(sockfd, &read_fds);
+
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+
+    int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+    if (ready_to_read > 0) {
+        struct sockaddr_in recv_addr;
+        socklen_t recv_len = sizeof(recv_addr);
+        std::uint32_t challenge;
+        int recv_msg = recvfrom(sockfd, &challenge, 4, 0, (struct sockaddr*)&recv_addr, &recv_len);
+
+        if (recv_msg > 0) {
+            std::cout << "Port: " << port_1 << ", is open. Response: " << std::hex << challenge << std::endl;
+        }
+        else {
+            std::cout << "Failed to recieve" << std::endl;
+        }
+    }
 
 // Puzzle 2: Send me a 4-byte message containing the signature you got from S.E.C.R.E.T in the first 4 bytes (in network byte order).
 

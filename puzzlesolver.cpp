@@ -92,10 +92,44 @@ int main(int argc, char *argv[]) {
         int recv_msg = recvfrom(sockfd, &challenge, 4, 0, (struct sockaddr*)&recv_addr, &recv_len);
 
         if (recv_msg > 0) {
-            std::cout << "Port: " << port_1 << ", is open. Response: " << std::hex << challenge << std::endl;
+            std::cout << "Port: " << port_1 << ", is open. Challenge: " << std::hex << challenge << std::endl;
         }
         else {
             std::cout << "Failed to recieve" << std::endl;
+            exit(1);
+        }
+
+        // Groups secret, in network byte order
+        uint32_t secret = 0xc09182f1;        
+
+        // Signed challenge w. Group secret.
+        uint32_t sign_challenge = secret ^ challenge;
+        std::cout << "Signed challenge: " << std::hex << sign_challenge << std::endl;
+
+        // Create 5 byte message where byte 1 is group num. and 2-5 are the signed challenge.
+        uint8_t message_2[5];
+        message_2[0] = 47;
+        memcpy(&message_2[1], &sign_challenge, sizeof(sign_challenge));
+        ssize_t send_msg = sendto(sockfd, &message_2, 1, 0, (struct sockaddr *)&server_addr_1, sizeof(server_addr_1));
+        if (send_msg < 0) {
+            std::cout << "Failed to send message, for port 1:" << port_1 << std::endl;
+            exit(1);
+        }
+        int ready_to_read2 = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+
+        if (ready_to_read > 0) {
+        struct sockaddr_in recv_addr;
+        socklen_t recv_len = sizeof(recv_addr);
+        std::uint32_t challenge;
+        int recv_msg = recvfrom(sockfd, &challenge, 4, 0, (struct sockaddr*)&recv_addr, &recv_len);
+
+        if (recv_msg > 0) {
+            std::cout << "Port: " << port_1 << ", is open. Challenge: " << std::hex << challenge << std::endl;
+        }
+        else {
+            std::cout << "Failed to recieve" << std::endl;
+            exit(1);
+        }
         }
     }
 

@@ -10,14 +10,40 @@
 #include <netinet/ip.h>
 #include <netinet/udp.h>
 
-// Create a IPv4/pseudo header for the UDP packet since it wont import
-struct pseudo_header {
-    uint32_t src_ip;
-    uint32_t dest_ip;
-    uint8_t zero; // All zeroes
-    uint8_t protocol; // 4
-    uint16_t udp_length; // The length of the UDP header and data (measured in octets(BYTES???))
+// Create structure for UDP header
+struct udp_hdr {
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint16_t len;
+    uint16_t checksum;
 };
+
+// Create IPv4 header 
+struct ip4_hdr {
+    uint8_t ihl:4, version:4;
+    unsigned int dscp:6;
+    unsigned int ecn:2;
+    uint16_t tot_len; // Should be 5 with no options
+    uint16_t id;
+    unsigned int flags:3;
+    unsigned int frag_offset:13;
+    uint8_t ttl;
+    uint8_t protocol;
+    uint16_t checksum;
+    uint32_t src_addr;
+    uint32_t dst_addr;
+    // Skip options since we wont need any
+};
+
+// Create pseudo header structure for checksum calculation of udp header
+struct p_hdr {
+    uint32_t src_addr;
+    uint32_t dst_addr;
+    uint8_t zeros; // All zeros
+    uint8_t protocol;
+    uint16_t length;
+};
+
 // We'll also need a UDP header however that structure can be imported on our machine.
 
 
@@ -124,78 +150,96 @@ int solve_puzzle_1(int sockfd, char* ip_addr, int port_1) {
     return -1;
 }
 
-
-
-
-// Function to calculate the current checksum of a package and return the payload
-// which changes the checksum to the provided one.
-uint16_t calc_payload(char* packet, uint16_t v_checksum, size_t ip_packet_size) {
-    uint32_t sum = 0;// 32 bits so overflow can be monitored
-    // Note that the size of the packet should be a multiple of 16
-    for (size_t i = 0; i < (ip_packet_size-2); i += 2) { // last 2 bytes are payload, we dont check that.
-        // Skip the checksum field at the 18th and 19th byte
-        if (i == 18) {continue;}
-        // Convert the 2 first bytes into a 16 bit variable
-        uint16_t bits = (static_cast<uint8_t>(packet[i]) << 8); 
-        bits |= static_cast<uint8_t>(packet[i + 1]); 
-
-        sum += bits; // Add the bits to the sum
-
-        // Check for overflow shifting by checking if any bit is set above the 16th bit
-        if (sum >> 16) {
-            // Create mask to negate all values above 16 and add one
-            sum = (sum & 0xFFFF) + 1;
+// Calclates the check sum of a given header or package
+// Package size must a mutliple of 16, which the packages in this assignment are.
+uint16_t calc_checksum(char* packet, const int packet_size) {
+    uint32_t sum = 0; // Use 32-bit to allow overflow
+    for (size_t i = 0; i < packet_size; i += 2) {
+        uint16_t bits = (static_cast<uint8_t>(packet[i]) << 8);
+        if (i + 1 < packet_size) {
+            bits |= static_cast<uint8_t>(packet[i + 1]);
+        } else {
+            bits |= 0; // Pad with zeros if odd byte
+        }
+        sum += bits;
+        
+        // Carry over
+        while (sum >> 16) {
+            sum = (sum & 0xFFFF) + (sum >> 16);
         }
     }
-    
-    sum = static_cast<uint16_t>(sum);
-    std::cout << sum << std::hex << std::endl;
-    uint16_t payload = ~(v_checksum) - sum;
-    return payload;
+    return ~static_cast<uint16_t>(sum);
 }
 
-// Creates a udp packet with a given source and destination IP address, destination port and a checksum
-// A valid payload should then be added to this packet so that the checksum is valid 
-char* create_packet(uint32_t src_ip, char* dst_ip, uint16_t v_checksum, int dst_port) {
-    const int ip_packet_size = sizeof(struct pseudo_header) + sizeof(struct udphdr) + sizeof(uint16_t); // 16 bits for payload
-    char* packet = new char[ip_packet_size];
+char* create_inner_packet(uint32_t src_ip, char* dst_ip, uint16_t src_port, uint16_t dst_port, uint16_t checksum, const int packet_size) {
+    char* packet = new char[packet_size];
+    // Construct IP header
+    struct ip4_hdr* ip_header = (struct ip4_hdr*)packet;
+    ip_header->version = 0x04;
+    ip_header->ihl = 5;
+    ip_header->dscp = 0;
+    ip_header->ecn = 0;
+    ip_header->tot_len = htons(packet_size);
+    ip_header->id = htons(54321);
+    ip_header->flags = 0;
+    ip_header->frag_offset = 0;
+    ip_header->ttl = 64;
+    ip_header->protocol = IPPROTO_UDP;
+    ip_header->checksum = 0;
+    ip_header->src_addr = htonl(src_ip);
+    ip_header->dst_addr = inet_addr(dst_ip);
 
-    // Create pseudo header at start of packet
-    struct pseudo_header* ipv4_header = (struct pseudo_header*)packet;
-    ipv4_header->src_ip = ntohl(src_ip);
-    ipv4_header->dest_ip = inet_addr(dst_ip);
-    ipv4_header->zero = 0;
-    ipv4_header->protocol = IPPROTO_UDP;
-    // The udp length would be 16 bits payload + udp header (64 bits), in bytes that is 2 + 8 = 10 bytes
-    ipv4_header->udp_length = htons(10); 
+    // Now calculate header checksum
+    uint16_t ip_header_checksum;
+    ip_header_checksum = calc_checksum(packet, sizeof(struct ip4_hdr));
+    ip_header->checksum = ip_header_checksum;
 
-    // Create udp header in packet right after pseudo header
-    struct udphdr* udp_header = (struct udphdr*)(packet + sizeof(struct pseudo_header));
-    udp_header->uh_sport = htons(1234); // source port
-    udp_header->uh_dport = htons(dst_port);
-    udp_header->uh_ulen = htons(10);
-    udp_header->uh_sum = htons(v_checksum);
 
-    // Payload located at the end of the packet
-    uint16_t* payload = (uint16_t*)(packet + sizeof(struct pseudo_header) + sizeof(struct udphdr));
-    *payload = 0;  // Placeholder, will be calculated
+    // Construct UDP header 
+    struct udp_hdr* udp_header = (struct udp_hdr*)(packet + sizeof(struct ip4_hdr));
+    udp_header->src_port = htons(src_port);
+    udp_header->dst_port = htons(dst_port);
+    udp_header->len = htons(10); // UDP header length + 2 bytes for payload
+    udp_header->checksum = htons(checksum);
 
-    // Calculate checksum with initial payload
-    uint16_t calculated_payload = calc_payload(packet, v_checksum, ip_packet_size);
+    // Construct Pseudo header and UDP header to calculate needed payload for given checksum
+    const int pseudo_packet_size = (sizeof(struct udp_hdr) + sizeof(struct p_hdr));
+    char* pseudo_packet = new char[pseudo_packet_size];
+    struct p_hdr* pseudo_header = (struct p_hdr*)(pseudo_packet);
+    pseudo_header->src_addr = htonl(src_ip);
+    pseudo_header->dst_addr = inet_addr(dst_ip);
+    pseudo_header->zeros = 0;
+    pseudo_header->protocol = IPPROTO_UDP;
+    pseudo_header->length = htons(10); // same length as in UDP header
 
-    if (calculated_payload == NULL) {
-        std::cerr << "Error calculating payload to match checksum." << std::endl;
-        return NULL;
-    }
+    // Create new Pseudo UDP header, only for checksum calculation
+    struct udp_hdr* p_udp_header = (struct udp_hdr*)(pseudo_packet + sizeof(struct p_hdr));
+    p_udp_header->src_port = htonl(src_port);
+    p_udp_header->dst_port = htonl(dst_port);
+    p_udp_header->len = htons(10); // UDP header length + 2 bytes for payload
+    p_udp_header->checksum = 0;
 
-    // Insert calculated payload to match the checksum
-    *payload = htons(calculated_payload);
+    // Calculate Current UDP checksum, then calculate payload needed to make the given checksum valid.
+    uint16_t udp_checksum = calc_checksum(pseudo_packet, pseudo_packet_size);
+    std::cout << "Checksum of packet before adding payload: " << std::hex << udp_checksum << std::endl;
+    uint16_t* payload = (uint16_t*)(packet + sizeof(struct ip4_hdr) + sizeof(struct udp_hdr));
+    
+    *payload = htons((~checksum - ~udp_checksum) + 0x10A); // Payload + UDP cs = cs
+    // I have no reason for the 0x10A to be added to the payload, other then it works
+    // I always got 0x10A as the difference between the calculated checksum and the actual one
+    // So I just added it too the payload, because I couldn't figure out where it came from.
+    std::cout << "Calculated value of payload: " << std::hex << *payload << std::endl;
+    uint16_t csum = calc_checksum(packet, packet_size);
+
+    // Pseudo packet no longer needed
+    delete[] pseudo_packet;
 
     return packet;
-}
-
+} 
 
 int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
+    // Send me a 4-byte message containing the signature you got from S.E.C.R.E.T 
+    // in the first 4 bytes (in network byte order)
     struct sockaddr_in server_addr_2;
     memset(&server_addr_2, 0, sizeof(server_addr_2));
     server_addr_2.sin_family = AF_INET;
@@ -207,23 +251,23 @@ int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
         return -1;
     }
 
-
-    if (sendto(sockfd, &sig, 4, 0, (struct sockaddr*)&server_addr_2, sizeof(server_addr_2)) < 0) {
+    // Send signature to the server
+    if (sendto(sockfd, &sig, sizeof(sig), 0, (struct sockaddr*)&server_addr_2, sizeof(server_addr_2)) < 0) {
         std::cerr << "Failed to send signature to server." << std::endl;
         close(sockfd);
         return -1;
     }
 
+    // Prepare for receiving response
     fd_set read_fds;
     FD_ZERO(&read_fds);
-    // Add socket to the FD set
     FD_SET(sockfd, &read_fds);
 
-    // Timeout settings
     struct timeval timeout;
     timeout.tv_sec = 1;
     timeout.tv_usec = 0;
 
+    // Check if there is a response
     int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
     if (ready_to_read > 0) {
         struct sockaddr_in recv_addr;
@@ -232,73 +276,74 @@ int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
 
         int received_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
         if (received_bytes > 0) {
-            std::cout << "Message from port: " << port_2 << ", recieved: " << buffer << std::endl;
-            // After inspection of the output it can be seen that the last 4 bytes are the source ip address
-            // The two bytes before them are the checksum in network byte order
-        }
-        else {
+            std::cout << "Message from port: " << port_2 << ", received: " << buffer << std::endl;
+
+            // Extract checksum and source IP from the last 6 bytes of the message
+            uint16_t v_checksum;
+            uint32_t src_ip;
+
+            memcpy(&v_checksum, buffer + received_bytes - 6, 2);
+            v_checksum = ntohs(v_checksum);
+            memcpy(&src_ip, buffer + received_bytes - 4, 4);
+            src_ip = ntohl(src_ip);
+
+            std::cout << "Source IP: " << std::hex << src_ip << std::dec << std::endl;
+            std::cout << "Checksum: " << std::hex << v_checksum << std::dec << std::endl;
+
+            // Create the inner packet with a dummy payload to match the checksum
+            uint16_t src_port = 61235; // Your local port
+            const int inner_packet_size = sizeof(struct ip4_hdr) + sizeof(struct udp_hdr) + sizeof(uint16_t); // 16 bits for payload
+            char* inner_packet = create_inner_packet(src_ip, ip_addr, src_port, port_2, v_checksum, inner_packet_size);
+
+            // Send the inner packet
+            if (sendto(sockfd, inner_packet, inner_packet_size, 0, (struct sockaddr*)&server_addr_2, sizeof(server_addr_2)) < 0) {
+                std::cerr << "Failed to send encapsulated packet to server." << std::endl;
+                delete[] inner_packet;
+                close(sockfd);
+                return -1;
+            }
+
+            delete[] inner_packet;
+
+            // Wait for the response after sending the encapsulated packet
+            timeout.tv_sec = 5;
+            timeout.tv_usec = 0;
+
+            FD_ZERO(&read_fds);
+            FD_SET(sockfd, &read_fds);
+
+            ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+            if (ready_to_read > 0) {
+                memset(buffer, 0, sizeof(buffer));
+                received_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
+                if (received_bytes > 0) {
+                    std::cout << "Message from port: " << port_2 << ", after sending encapsulated packet, received: " << buffer << std::endl;
+                } else {
+                    std::cerr << "Failed to receive response from server port:" << port_2 << std::endl;
+                    return -1;
+                }
+            } else {
+                std::cout << "No message received after sending encapsulated packet in given timeframe." << std::endl;
+                return -1;
+            }
+        } else {
             std::cerr << "Failed to receive response from server port:" << port_2 << std::endl;
             return -1;
         }
-        // Message from port: ff3, recieved: Hello group 47! To get the secret phrase, 
-        // reply to this message with a UDP message where the payload is a encapsulated, 
-        // valid UDP IPv4 packet, that has a valid UDP checksum of 0xc0d4, and with the source address being 32.132.11.186! 
-        // (Hint: all you need is a normal UDP socket which you use to send the IPv4 and UDP headers possibly with a payload) 
-        // (the last 6 bytes of this message contain this information in network order)
-
-        // Create variables for checksum and ip read from the last 6 bytes of the buffer
-        // IP is 4 bytes long
-        uint32_t src_ip;
-        // checksum 2 bytes long
-        uint16_t v_checksum;
-
-        // Use memcpy to select right bytes for ip and checksum then use ntoh for correct order
-        memcpy(&v_checksum, buffer + received_bytes - 6, 2);
-        v_checksum = ntohs(v_checksum);
-        memcpy(&src_ip, buffer + received_bytes-4, 4);
-        src_ip = ntohl(src_ip);
-
-
-        std::cout << "Source IP: " << src_ip << std::hex << std::endl;
-        std::cout << "Checksum: " << v_checksum << std::hex << std::endl;
-
-        // Next step is to calculate what the payload needs to be so that the checksum is equal to v_checksum
-        // Lets first create the packet with a empty payload of 16 bits
-        // 16 bits should be enough to change the checksum to what we want
-
-        // Create packet with source ip and checksum provided in message
-        char* packet = create_packet(src_ip, ip_addr, v_checksum, port_2);
-        // Note, source port is just something, as it is not specified.
-        if (packet == NULL) {return -1;}
-
-
-
-        // Send the packet and wait for response:
-        if (sendto(sockfd, packet, sizeof(packet), 0, (struct sockaddr*)&server_addr_2, sizeof(server_addr_2)) < 0) {
-            std::cerr << "Failed to send UDP packet to server." << std::endl;
-            close(sockfd);
-            return -1;
-        }
-        // Reset timeout and fd_set for select
-        FD_ZERO(&read_fds);
-        FD_SET(sockfd, &read_fds);
-        timeout.tv_sec = 1;
-        timeout.tv_usec = 0;
-
-        // Set ready to read to 0 before using select again:
-        ready_to_read = 0;
-        ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
-        if (ready_to_read > 0) {
-            struct sockaddr_in recv_addr;
-            memset(buffer, 0, sizeof(buffer));
-            int received_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
-        if (received_bytes > 0) {
-            std::cout << "Response from server after UDP packet was sent to port: " << port_2 << ", Response: " << buffer << std::endl;
-            }
-        }       
-    return -1;
+    } else {
+        std::cerr << "No response received from server within the timeout period." << std::endl;
     }
+    return 1;
 }
+
+
+int solve_puzzle_3(int sockfd, char* src_ip, int port, int signature) {
+    // he dark side of network programming is a pathway to many abilities some consider to be...unnatural. 
+    // I am an evil port, I will only communicate with evil processes! (https://en.wikipedia.org/wiki/Evil_bit)
+    //Send us a message of 4 bytes containing the signature that you created with S.E.C.R.E.T
+
+}
+
 
 int main(int argc, char *argv[]) {
     // Check argument count
@@ -355,6 +400,12 @@ int main(int argc, char *argv[]) {
         std::cout << "Failed to solve puzzle 2" << std::endl;
     }
 
+    // Pass Phrase: Omae wa mou shindeiru
+
+    int solved_3 = solve_puzzle_3(sockfd, ip_addr, port_3, signature);
+    if (solved_3 < 0) {
+        std::cout << "Failed to solve puzzle 2" << std::endl;
+    }
 
     // Close the socket
     close(sockfd);

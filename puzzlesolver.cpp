@@ -9,6 +9,10 @@
 #include <iomanip>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
+#include <errno.h>
+
+const char* SOURCE_ADDRESS = "192.168.1.113";
+const uint16_t SOURCE_PORT = 58690;
 
 // Create structure for UDP header
 struct udp_hdr {
@@ -33,6 +37,20 @@ struct ip4_hdr {
     uint32_t src_addr;
     uint32_t dst_addr;
     // Skip options since we wont need any
+};
+
+// Made another ip header for puzzle three
+struct ip_hdr {
+    uint8_t version_ihl; 
+    uint8_t tos;
+    uint16_t tot_len;
+    uint16_t id;
+    uint16_t frag_off;
+    uint8_t ttl;
+    uint8_t protocol;
+    uint16_t check;
+    uint32_t saddr;
+    uint32_t daddr;
 };
 
 // Create pseudo header structure for checksum calculation of udp header
@@ -214,8 +232,8 @@ char* create_inner_packet(uint32_t src_ip, char* dst_ip, uint16_t src_port, uint
 
     // Create new Pseudo UDP header, only for checksum calculation
     struct udp_hdr* p_udp_header = (struct udp_hdr*)(pseudo_packet + sizeof(struct p_hdr));
-    p_udp_header->src_port = htonl(src_port);
-    p_udp_header->dst_port = htonl(dst_port);
+    p_udp_header->src_port = htons(src_port);
+    p_udp_header->dst_port = htons(dst_port);
     p_udp_header->len = htons(10); // UDP header length + 2 bytes for payload
     p_udp_header->checksum = 0;
 
@@ -343,7 +361,7 @@ int solve_puzzle_3(int sockfd, char* dst_ip, int dst_port, int signature) {
     //Send us a message of 4 bytes containing the signature that you created with S.E.C.R.E.T
 
     // The evil bit is the reserved bit(first bit) in the flag field of the IPv4 header
-    // The IP header must be adjusted to set that flag
+   // The IP header must be adjusted to set that flag
     int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP);
     if (raw_sock < 0) {
         perror("Raw socket creation failed.");
@@ -380,7 +398,7 @@ int solve_puzzle_3(int sockfd, char* dst_ip, int dst_port, int signature) {
     ip_header->ttl = 64;
     ip_header->protocol = IPPROTO_UDP;
     ip_header->checksum = 0;
-    ip_header->src_addr = 0; // System will assign correct source address
+    ip_header->src_addr = inet_addr(SOURCE_ADDRESS); // System will assign correct source address
     ip_header->dst_addr = inet_addr(dst_ip);
     // Calulate the header checksum
     uint16_t ip_header_checksum = calc_checksum(packet, sizeof(struct ip4_hdr));
@@ -388,16 +406,36 @@ int solve_puzzle_3(int sockfd, char* dst_ip, int dst_port, int signature) {
 
     // Construct UDP header
     struct udp_hdr* udp_header = (struct udp_hdr*)(packet + sizeof(struct ip4_hdr));
-    udp_header->src_port = htons(61235);
+    udp_header->src_port = htons(SOURCE_PORT);
     udp_header->dst_port = htons(dst_port);
-    udp_header->len = htons(9);
+    udp_header->len = htons(12);
     udp_header->checksum = 0; // UDP checksum can be skipped if using IPv4
 
     int* payload = (int*)(packet + sizeof(struct ip4_hdr) + sizeof(struct udp_hdr));
     *payload = htonl(signature);
 
+    // Construct Pseudo header and UDP header to calculate needed payload for given checksum
+    const int pseudo_packet_size = (sizeof(struct udp_hdr) + sizeof(struct p_hdr));
+    char* pseudo_packet = new char[pseudo_packet_size];
+    struct p_hdr* pseudo_header = (struct p_hdr*)(pseudo_packet);
+    pseudo_header->src_addr = inet_addr(SOURCE_ADDRESS);
+    pseudo_header->dst_addr = inet_addr(dst_ip);
+    pseudo_header->zeros = 0;
+    pseudo_header->protocol = IPPROTO_UDP;
+    pseudo_header->length = htons(12); // same length as in UDP header
+
+    // Create new Pseudo UDP header, only for checksum calculation
+    struct udp_hdr* p_udp_header = (struct udp_hdr*)(pseudo_packet + sizeof(struct p_hdr));
+    p_udp_header->src_port = htons(SOURCE_PORT);
+    p_udp_header->dst_port = htons(dst_port);
+    p_udp_header->len = htons(12); // UDP header length + 2 bytes for payload
+    p_udp_header->checksum = 0;
+
+    uint16_t udp_checksum = calc_checksum(pseudo_packet, pseudo_packet_size);
+    udp_header->checksum = udp_checksum;
+
     if (sendto(raw_sock, packet, packet_size, 0, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        std::cout << "Evil send failed." << std::endl;
+        std::cerr << "Evil send failed. Error: " << strerror(errno) << std::endl;
         close(raw_sock);
         delete[] packet;
         return -1;
@@ -492,7 +530,7 @@ int main(int argc, char *argv[]) {
 
     int solved_3 = solve_puzzle_3(sockfd, ip_addr, port_3, signature);
     if (solved_3 < 0) {
-        std::cout << "Failed to solve puzzle 2" << std::endl;
+        std::cout << "Failed to solve puzzle 3" << std::endl;
     }
 
     // Close the socket
@@ -513,3 +551,4 @@ int main(int argc, char *argv[]) {
 
 // Tip: To discover the secret ports and their associated phrases, start by solving challenges on the ports detected using your port scanner. Happy hunting!
 
+ 

@@ -428,8 +428,8 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
-    local_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
-    local_addr.sin_port = htons(SOURCE_PORT); // Bind to port_1 or any port you expect to receive responses
+    local_addr.sin_addr.s_addr = inet_addr(SOURCE_ADDRESS);
+    local_addr.sin_port = htons(SOURCE_PORT); // Make sure SOURCE_PORT is a valid port
 
     if (bind(sockfd, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
         perror("Bind failed");

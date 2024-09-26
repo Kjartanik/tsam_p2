@@ -371,12 +371,12 @@ int solve_puzzle_3(int sockfd, char* dst_ip, int dst_port, int signature) {
         perror("Raw socket creation failed.");
         return -1;
     }
-//     int on = 1;
-//     if (setsockopt(raw_sock, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
-//         perror("Error setting IP_HDRINCL");
-//         close(raw_sock);
-//         return -1;
-// }
+    int on = 1;
+    if (setsockopt(raw_sock, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
+        perror("Error setting IP_HDRINCL");
+        close(raw_sock);
+        return -1;
+    }
 
     // Construct the packet to send and its size
     uint16_t packet_size = sizeof(struct ip4_hdr) + sizeof(struct udp_hdr) + 4; // 4 bytes to send, should be 30 in total

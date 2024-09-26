@@ -11,8 +11,9 @@
 #include <netinet/udp.h>
 #include <errno.h>
 
-const char* SOURCE_ADDRESS = "172.20.10.2";
-const uint16_t SOURCE_PORT = 65202;
+
+const char* SOURCE_ADDRESS = "0.0.0.0";
+const uint16_t SOURCE_PORT = 63605;
 
 // Create structure for UDP header
 struct udp_hdr {
@@ -182,10 +183,8 @@ uint16_t calc_checksum(char* packet, const int packet_size) {
         sum += bits;
         
         // Carry over
-        while (sum >> 16) {
-            sum = (sum & 0xFFFF) + (sum >> 16);
-        }
     }
+    sum = (sum & 0xFFFF) + (sum >> 16);
     return ~static_cast<uint16_t>(sum);
 }
 
@@ -353,86 +352,90 @@ int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
 }
 
 
-int solve_puzzle_3(int sockfd, char* dst_ip, int dst_port, int signature) {
-    // Construct the source and destination addresses
-    struct sockaddr_in src_addr;
-    src_addr.sin_family = AF_INET;
-    src_addr.sin_port = htons(SOURCE_PORT);
-    inet_aton(SOURCE_ADDRESS, &src_addr.sin_addr);
-    
-    struct sockaddr_in dst_addr;
-    dst_addr.sin_family = AF_INET;
-    dst_addr.sin_port = htons(dst_port);
-    inet_aton(dst_ip, &dst_addr.sin_addr);
 
 
-    int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
-    if (raw_sock < 0) {
-        perror("Raw socket creation failed.");
-        return -1;
-    }
-    int on = 1;
-    if (setsockopt(raw_sock, IPPROTO_IP, IP_HDRINCL, &on, sizeof(on)) < 0) {
-        perror("Error setting IP_HDRINCL");
-        close(raw_sock);
+int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
+    int IP_HDRINCL_ON = 1;
+    int raw_sock;
+    signature = htonl(signature);
+
+    if ((raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
+        perror("Unable to create a socket\n");
         return -1;
     }
 
-    // Construct the packet to send and its size
-    uint16_t packet_size = sizeof(struct ip4_hdr) + sizeof(struct udp_hdr) + 4; // 4 bytes to send, should be 30 in total
-    uint16_t packet[packet_size];
-
-    struct ip4_hdr* ip_header;
-    ip_header = (struct ip4_hdr*)packet;
-    ip_header->version = 4;
-    ip_header->ihl = 5; // 5 when no options are set
-    ip_header->dscp = 0;
-    ip_header->ecn = 0;
-    ip_header->tot_len = htons(packet_size)+1; // header + 4 bytes data
-    ip_header->id = 0; // Should be automatic
-    ip_header->flags = (1<<2) | 1;
-    ip_header->frag_offset = 0;
-    ip_header->ttl = 64;
-    ip_header->protocol = IPPROTO_UDP;
-    ip_header->checksum = 0; // should be automatic
-    ip_header->src_addr = src_addr.sin_addr.s_addr;
-    ip_header->dst_addr = dst_addr.sin_addr.s_addr;
-
-    ip_header->checksum = calc_checksum((char*)ip_header, sizeof(struct ip4_hdr));
-
-    // This should be correct for IP header
-    uint16_t udp_length = sizeof(struct udp_hdr) + sizeof(int);
-    // Construct udp header and pseudo header for checksum
-    uint16_t pseudo_packet_size = sizeof(struct p_hdr) + sizeof(struct udp_hdr) + sizeof(int);
-    uint16_t pseudo_packet[pseudo_packet_size];
-    struct p_hdr* pseudo_header = (struct p_hdr *)pseudo_packet;
-    pseudo_header->src_addr = src_addr.sin_addr.s_addr;
-    pseudo_header->dst_addr = dst_addr.sin_addr.s_addr;
-    pseudo_header->zeros = 0;
-    pseudo_header->protocol = IPPROTO_UDP;
-    pseudo_header->length = htons(udp_length);
-
-    struct udp_hdr *udp_header;
-    udp_header = (struct udp_hdr *)(packet + sizeof(struct p_hdr));
-    udp_header->src_port = src_addr.sin_port;
-    udp_header->dst_port = dst_addr.sin_port;
-    udp_header->len = htons(udp_length); // UDP header + 4-byte payload
-    
-    int* payload;
-    payload = (int*)(packet + sizeof(struct p_hdr)+ sizeof(struct udp_hdr));
-    *payload = htonl(signature);
-
-    uint16_t checksum = calc_checksum((char*)pseudo_packet, pseudo_packet_size);
-    udp_header->checksum = checksum;
-
-    memcpy(packet + sizeof(struct ip4_hdr), pseudo_packet + sizeof(struct p_hdr), sizeof(udp_hdr));
-
-    if(sendto(raw_sock, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(dst_addr)) < 0){
-        std::cout << "Send to with raw socket failed" << std::endl;
-        close(raw_sock);
-        return -1;
+    if(setsockopt(raw_sock, IPPROTO_IP, IP_HDRINCL, &IP_HDRINCL_ON, sizeof(IP_HDRINCL_ON)) < 0) {
+            perror("Unable to set socket options \n");
+            close(raw_sock);
     }
-    std::cout << "Send with raw socket successful" << std::endl;
+
+    struct sockaddr_in* dst_addr;
+    dst_addr = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in));
+    dst_addr->sin_family = AF_INET;
+    dst_addr->sin_port = htons(dst_port);
+    dst_addr->sin_addr.s_addr = inet_addr(dst_ip);
+
+    char buffer[1024] = { 0 };
+    memset(buffer, 0, sizeof(buffer));
+
+    char* payload = (char*)(buffer + sizeof(struct udphdr) + sizeof(struct ip));
+    memcpy(payload, &signature, sizeof(signature));
+
+    udphdr* udp_header = (struct udphdr*)(buffer + sizeof(struct ip));
+    udp_header->uh_sport = htons(SOURCE_PORT);
+    udp_header->uh_dport = htons(dst_port);
+    udp_header->uh_ulen = htons(sizeof(struct udphdr) + sizeof(int));
+
+    char* pseudo_buffer = (char*)calloc((sizeof(struct p_hdr) + sizeof(struct udphdr) + strlen(payload)), sizeof(char));
+    if (pseudo_buffer == NULL) {perror("Unable to allocate pseudo buffer\n"); return -1;}
+
+    struct p_hdr pseudo_header;
+    pseudo_header.src_addr = inet_addr(SOURCE_ADDRESS);
+    pseudo_header.dst_addr = inet_addr(dst_ip);
+    pseudo_header.zeros = 0;
+    pseudo_header.protocol = IPPROTO_UDP;
+    pseudo_header.length = htons(sizeof(struct udphdr) + sizeof(int));
+
+    memcpy(pseudo_buffer, (char*)&pseudo_header, sizeof(struct p_hdr));
+    memcpy(pseudo_buffer + sizeof(struct p_hdr), udp_header, sizeof(struct udphdr) + strlen(payload + 1));
+
+    udp_header->uh_sum = calc_checksum(pseudo_buffer, sizeof(struct p_hdr) + sizeof(struct udphdr) + 1);
+    free(pseudo_buffer);
+
+    struct ip* ip_header;
+    ip_header = (struct ip*)buffer;
+    ip_header->ip_hl = 5;
+    ip_header->ip_v = 4;
+    ip_header->ip_tos = 0;
+    ip_header->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + strlen(payload);
+    ip_header->ip_ttl = 64;
+    ip_header->ip_p = IPPROTO_UDP;
+    struct in_addr source_addr;
+    inet_aton(SOURCE_ADDRESS, &source_addr);
+    ip_header->ip_src = source_addr;
+    struct in_addr destination_addr;
+    inet_aton(dst_ip, &destination_addr);
+    ip_header->ip_dst = destination_addr;
+
+    ip_header->ip_sum = calc_checksum((char*)ip_header, sizeof(struct ip));
+    int sent_bytes;
+    if((sent_bytes = sendto(raw_sock, buffer, (sizeof(struct ip) + sizeof(struct udphdr) + strlen(payload)), 0, (struct sockaddr*)dst_addr, sizeof(struct sockaddr_in)))<0) {
+        perror("Failed to send raw packet");
+    }
+
+    close(raw_sock);
+
+    struct sockaddr_in local_addr;
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Listen on all interfaces
+    local_addr.sin_port = htons(SOURCE_PORT); // Bind to port_1 or any port you expect to receive responses
+
+    if (bind(sockfd, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
+        perror("Bind failed");
+        close(sockfd);
+        return 1;
+    }
 
     fd_set read_fds;
     FD_ZERO(&read_fds);
@@ -442,26 +445,30 @@ int solve_puzzle_3(int sockfd, char* dst_ip, int dst_port, int signature) {
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
 
-    std::cout << "Send with raw socket successful" << std::endl;
-
     int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
-    if (ready_to_read <= 0) {
-        std::cout << "Failed to recieve message in timeframe" << std::endl;
+    if (ready_to_read < 0) {
+        std::cout << "Select failed" << std:: endl;
         close(raw_sock);
         return -1;
     }
-    std::cout << "Socket ready to read" << std::endl; 
+    if (ready_to_read == 0) {
+        std::cout << "Select timeout" << std::endl;
+        close(raw_sock);
+        return -1;
+    }
+
     struct sockaddr_in recv_addr;
     socklen_t recv_len = sizeof(recv_addr);
-    char buffer[1024];
+    char read_buffer[1024];
 
-    int recieved_bytes = recvfrom(sockfd, buffer, sizeof(buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
-    if (recieved_bytes < 0) {
-        std::cout << "Failed to read EVIL socket" << std::endl;
-        close(raw_sock);
+    int received_bytes = recvfrom(sockfd, read_buffer, sizeof(read_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
+    if (received_bytes > 0) {
+        std::cout << "Recieved response from port: " << dst_port << " after raw packet. Response: " << std::endl << read_buffer << std::dec << std::endl;
+    } else {
+        perror("Failed to receive message: Raw Sock");
+        close(sockfd);
         return -1;
     }
-    std::cout << "Server response:\n" << buffer << std::endl;
 
     return 1;
 }
@@ -505,8 +512,15 @@ int main(int argc, char *argv[]) {
     // Create socket
     int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sockfd < 0) {
-        std::cout << "Failed to create socket." << std::endl;
+        perror("Failed to create socket");
         return 1;
+    }
+
+    int optval = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+        perror("Failed to set SO_REUSEADDR");
+        close(sockfd);
+        exit(1);
     }
 
 

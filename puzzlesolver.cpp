@@ -13,7 +13,7 @@
 
 
 const char* SOURCE_ADDRESS = "0.0.0.0";
-const uint16_t SOURCE_PORT = 63605;
+const uint16_t SOURCE_PORT = 63604;
 
 // Create structure for UDP header
 struct udp_hdr {
@@ -103,7 +103,7 @@ int solve_puzzle_1(int sockfd, char* ip_addr, int port_1) {
 
     // Timeout settings
     struct timeval timeout;
-    timeout.tv_sec = 1;
+    timeout.tv_sec = 3;
     timeout.tv_usec = 0;
 
 
@@ -256,7 +256,7 @@ int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
     // Send me a 4-byte message containing the signature you got from S.E.C.R.E.T 
     // in the first 4 bytes (in network byte order)
     struct sockaddr_in server_addr_2;
-    memset(&server_addr_2, 0, sizeof(server_addr_2));
+    memset(&server_addr_2, 0, sizeof(sockaddr_in));
     server_addr_2.sin_family = AF_INET;
     server_addr_2.sin_port = htons(port_2);
 
@@ -355,9 +355,12 @@ int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
 
 
 int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
+    // Puzzle 3: The dark side of network programming is a pathway to many abilities some consider to be...unnatural. 
+    // I am an evil port, I will only communicate with evil processes! (https://en.wikipedia.org/wiki/Evil_bit)
+
     int IP_HDRINCL_ON = 1;
     int raw_sock;
-    signature = htonl(signature);
+    //signature = htonl(signature);
 
     if ((raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
         perror("Unable to create a socket\n");
@@ -410,6 +413,7 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     ip_header->ip_len = sizeof(struct ip) + sizeof(struct udphdr) + strlen(payload);
     ip_header->ip_ttl = 64;
     ip_header->ip_p = IPPROTO_UDP;
+    ip_header->ip_off = (1 << 15);
     struct in_addr source_addr;
     inet_aton(SOURCE_ADDRESS, &source_addr);
     ip_header->ip_src = source_addr;
@@ -425,16 +429,30 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
 
     close(raw_sock);
 
+    int new_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (new_sock < 0) {
+        perror("Failed to create socket");
+        return 1;
+    }
+
+    int optval = 1;
+    if (setsockopt(new_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+        perror("Failed to set SO_REUSEADDR");
+        close(new_sock);
+        exit(1);
+    }
+
+
     struct sockaddr_in local_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
     local_addr.sin_addr.s_addr = inet_addr(SOURCE_ADDRESS);
     local_addr.sin_port = htons(SOURCE_PORT); // Make sure SOURCE_PORT is a valid port
 
-    if (bind(sockfd, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
+    if (bind(new_sock, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
         perror("Bind failed");
-        close(sockfd);
-        return 1;
+        close(new_sock);
+        return -1;
     }
 
     fd_set read_fds;
@@ -445,15 +463,10 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     timeout.tv_sec = 5;
     timeout.tv_usec = 0;
 
-    int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+    int ready_to_read = select(new_sock + 1, &read_fds, NULL, NULL, &timeout);
     if (ready_to_read < 0) {
         std::cout << "Select failed" << std:: endl;
-        close(raw_sock);
-        return -1;
-    }
-    if (ready_to_read == 0) {
-        std::cout << "Select timeout" << std::endl;
-        close(raw_sock);
+        close(new_sock);
         return -1;
     }
 
@@ -461,7 +474,7 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     socklen_t recv_len = sizeof(recv_addr);
     char read_buffer[1024];
 
-    int received_bytes = recvfrom(sockfd, read_buffer, sizeof(read_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
+    int received_bytes = recvfrom(new_sock, read_buffer, sizeof(read_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
     if (received_bytes > 0) {
         std::cout << "Recieved response from port: " << dst_port << " after raw packet. Response: " << std::endl << read_buffer << std::dec << std::endl;
     } else {
@@ -469,10 +482,77 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
         close(sockfd);
         return -1;
     }
-
+    close(new_sock);
     return 1;
 }
 
+
+int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port, int signature, std::string phrase) {
+    // Puzzle 4:  Greetings! I am E.X.P.S.T.N, which stands for "Enhanced X-link Port Storage Transaction Node".
+    // What can I do for you? 
+    // If you provide me with a list of secret ports (comma-separated), I can guide you on the exact sequence of "knocks" to ensure you score full marks.
+
+    //How to use E.X.P.S.T.N?
+    // 1. Each "knock" must be paired with both a secret phrase and your unique S.E.C.R.E.T signature.
+    // 2. The correct format to send a knock: First, 4 bytes containing your S.E.C.R.E.T signature, followed by the secret phrase.
+
+    // Tip: To discover the secret ports and their associated phrases, start by solving challenges on the ports detected using your port scanner. Happy hunting!
+ 
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(dst_port);
+
+    if (inet_pton(AF_INET, dst_ip, &server_addr.sin_addr) <= 0) {
+        perror("Invalid address");
+        return -1;
+    }
+
+    // Construct secret port list
+    std::string buffer = "4025,4094";
+
+
+    if (sendto(sockfd, &buffer, buffer.length(), 0 , (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to send port list");
+        return -1;
+    } 
+    std::cout << "Send successful!" << std::endl;
+
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(sockfd, &read_fds);
+
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+
+
+    int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+    if (ready_to_read < 0) {
+        perror("Failed to select");
+        return -1;
+    }
+    if (ready_to_read == 0) {
+        perror("Select timeout");
+        return -1;
+    }
+    std::cout << "Select successful!" << std::endl;
+
+    struct sockaddr_in recv_addr;
+    socklen_t recv_len = sizeof(recv_addr);
+
+    char recv_buffer[1024];
+
+    int received_bytes = recvfrom(sockfd, recv_buffer, sizeof(recv_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
+    if (received_bytes > 0) {  
+        std::cout << "Port: " << dst_port << ". Message received: " << recv_buffer << std::endl;
+    } else {
+        std::cerr << "Failed to receive from server." << std::endl;
+        return -1;
+    }
+
+    return 1;
+}
 
 
 int main(int argc, char *argv[]) {
@@ -530,6 +610,7 @@ int main(int argc, char *argv[]) {
         std::cout << "Failed to solve puzzle 1" << std::endl;
     }
     // Puzzle solved port: 4045, signiture 3293dd49
+    int secret_port = 4045;
     int signature = 0x3293dd49;
 
     int solved_2 = solve_puzzle_2(sockfd, ip_addr, port_2, signature);
@@ -538,28 +619,20 @@ int main(int argc, char *argv[]) {
     }
 
     // Pass Phrase: Omae wa mou shindeiru
+    std::string secret_phrase = "Omae wa mou shindeiru";
 
     int solved_3 = solve_puzzle_3(sockfd, ip_addr, port_3, signature);
     if (solved_3 < 0) {
         std::cout << "Failed to solve puzzle 3" << std::endl;
     }
+    // Port 4094
+    int evil_port = 4094;
 
-    // Close the socket
+
+    int solved_4 = solve_puzzle_4(sockfd, ip_addr, port_4, signature, secret_phrase);
+    if (solved_4 < 0) {
+        std::cout << "Failed to solve puzzle 4" << std::endl;
+    } 
     close(sockfd);
     return 0;
 }
-
-// Puzzle 3: The dark side of network programming is a pathway to many abilities some consider to be...unnatural. 
-// I am an evil port, I will only communicate with evil processes! (https://en.wikipedia.org/wiki/Evil_bit)
-
-// Puzzle 4:  Greetings! I am E.X.P.S.T.N, which stands for "Enhanced X-link Port Storage Transaction Node".
-// What can I do for you? 
-// If you provide me with a list of secret ports (comma-separated), I can guide you on the exact sequence of "knocks" to ensure you score full marks.
-
-//How to use E.X.P.S.T.N?
-// 1. Each "knock" must be paired with both a secret phrase and your unique S.E.C.R.E.T signature.
-// 2. The correct format to send a knock: First, 4 bytes containing your S.E.C.R.E.T signature, followed by the secret phrase.
-
-// Tip: To discover the secret ports and their associated phrases, start by solving challenges on the ports detected using your port scanner. Happy hunting!
-
- 

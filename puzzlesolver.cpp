@@ -348,6 +348,7 @@ int solve_puzzle_2(int sockfd, char* ip_addr, int port_2, int sig) {
     } else {
         std::cerr << "No response received from server within the timeout period." << std::endl;
     }
+
     return 1;
 }
 
@@ -486,6 +487,9 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     return 1;
 }
 
+int knock(int sockfd, uint16_t dst_port, knock) {
+
+}
 
 int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port, int signature, std::string phrase) {
     // Puzzle 4:  Greetings! I am E.X.P.S.T.N, which stands for "Enhanced X-link Port Storage Transaction Node".
@@ -553,6 +557,8 @@ int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port, int signature, std::s
 
     return 1;
 }
+
+
 
 
 int main(int argc, char *argv[]) {

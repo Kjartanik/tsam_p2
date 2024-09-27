@@ -487,11 +487,11 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     return 1;
 }
 
-int knock(int sockfd, uint16_t dst_port, knock) {
+char* knock_on_port(int sockfd, sockaddr_in address, char* knock) {
 
 }
 
-int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port, int signature, std::string phrase) {
+int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port) {
     // Puzzle 4:  Greetings! I am E.X.P.S.T.N, which stands for "Enhanced X-link Port Storage Transaction Node".
     // What can I do for you? 
     // If you provide me with a list of secret ports (comma-separated), I can guide you on the exact sequence of "knocks" to ensure you score full marks.
@@ -554,10 +554,43 @@ int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port, int signature, std::s
         std::cerr << "Failed to receive from server." << std::endl;
         return -1;
     }
-
-    return 1;
 }
 
+int port_knocker(int sockfd, char* dst_ip) {
+    std::string secret_phrase = "Omae wa mou shindeiru";
+    int signature = 0x3293dd49;
+
+    // Create knock
+    size_t knock_size = sizeof(signature) + secret_phrase.size();
+    char* knock = new char[knock_size];
+    memcpy(knock, &signature, sizeof(signature));
+    memcpy(knock + sizeof(signature), secret_phrase.c_str(), secret_phrase.size());
+
+    // Construct addresses for the 2 secret ports
+    struct sockaddr_in secret_addr_1;
+    memset(&secret_addr_1, 0, sizeof(secret_addr_1));
+    secret_addr_1.sin_family = AF_INET;
+    secret_addr_1.sin_port = htons(4025);
+
+    struct sockaddr_in secret_addr_2;
+    memset(&secret_addr_2, 0, sizeof(secret_addr_2));
+    secret_addr_2.sin_family = AF_INET;
+    secret_addr_2.sin_port = htons(4094);
+
+    // Create list for knocking sequence
+    sockaddr_in port_sequence[] =   {secret_addr_1, secret_addr_2, secret_addr_1, 
+                                    secret_addr_1, secret_addr_2, secret_addr_2};
+
+    for (int i = 0; i <= 6; i++) {
+        char* response = knock_on_port(sockfd, port_sequence[i], knock);
+        std::cout << "Response after knock: " << i << "\nRespnse: " << response << std::endl;
+    }
+
+    
+
+    free(knock);
+    return 1;
+}
 
 
 
@@ -625,7 +658,6 @@ int main(int argc, char *argv[]) {
     }
 
     // Pass Phrase: Omae wa mou shindeiru
-    std::string secret_phrase = "Omae wa mou shindeiru";
 
     int solved_3 = solve_puzzle_3(sockfd, ip_addr, port_3, signature);
     if (solved_3 < 0) {
@@ -635,7 +667,7 @@ int main(int argc, char *argv[]) {
     int evil_port = 4094;
 
 
-    int solved_4 = solve_puzzle_4(sockfd, ip_addr, port_4, signature, secret_phrase);
+    int solved_4 = solve_puzzle_4(sockfd, ip_addr, port_4);
     if (solved_4 < 0) {
         std::cout << "Failed to solve puzzle 4" << std::endl;
     } 

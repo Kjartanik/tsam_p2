@@ -487,8 +487,43 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     return 1;
 }
 
-char* knock_on_port(int sockfd, sockaddr_in address, char* knock) {
+char* knock(int sockfd, struct sockaddr_in server_addr, char* knock) {
+    if (sendto(sockfd, &knock, sizeof(knock), 0 , (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to send knock");
+        return "";
+    } 
+    std::cout << "Knock successful!" << std::endl;
 
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(sockfd, &read_fds);
+
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+
+    int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+    if (ready_to_read < 0) {
+        perror("Failed to select");
+        return "";
+    }
+    if (ready_to_read == 0) {
+        perror("Select timeout");
+        return "";
+    }
+
+    struct sockaddr_in recv_addr;
+    socklen_t recv_len = sizeof(recv_addr);
+
+    char recv_buffer[1024];
+
+    int received_bytes = recvfrom(sockfd, recv_buffer, sizeof(recv_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
+    if (received_bytes > 0) {  
+        return recv_buffer;
+    } else {
+        perror("Failed to receive from server.");
+        return "";
+    }
 }
 
 int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port) {

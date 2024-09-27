@@ -621,7 +621,7 @@ int port_knocker(int sockfd, char* dst_ip) {
         std::cout << "Response after knock: " << i << "\nRespnse: " << response << std::endl;
     }
 
-    
+
 
     free(knock);
     return 1;

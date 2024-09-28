@@ -487,12 +487,11 @@ int solve_puzzle_3(int sockfd, char* dst_ip, uint16_t dst_port, int signature) {
     return 1;
 }
 
-char* knock(int sockfd, struct sockaddr_in server_addr, char* knock) {
-    if (sendto(sockfd, &knock, sizeof(knock), 0 , (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Failed to send knock");
+char* knock_on_port(int sockfd, struct sockaddr_in server_addr, char* secret_knock, size_t knock_size) {
+    if (sendto(sockfd, secret_knock, knock_size, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Failed to send secret_knock");
         return "";
-    } 
-    std::cout << "Knock successful!" << std::endl;
+    }
 
     fd_set read_fds;
     FD_ZERO(&read_fds);
@@ -518,13 +517,18 @@ char* knock(int sockfd, struct sockaddr_in server_addr, char* knock) {
     char recv_buffer[1024];
 
     int received_bytes = recvfrom(sockfd, recv_buffer, sizeof(recv_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
-    if (received_bytes > 0) {  
-        return recv_buffer;
+    if (received_bytes > 0) {
+        // Allocate memory for the response
+        char* response = new char[received_bytes + 1];
+        memcpy(response, recv_buffer, received_bytes);
+        response[received_bytes] = '\0'; // Null-terminate the response
+        return response;
     } else {
         perror("Failed to receive from server.");
         return "";
     }
 }
+
 
 int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port) {
     // Puzzle 4:  Greetings! I am E.X.P.S.T.N, which stands for "Enhanced X-link Port Storage Transaction Node".
@@ -532,8 +536,8 @@ int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port) {
     // If you provide me with a list of secret ports (comma-separated), I can guide you on the exact sequence of "knocks" to ensure you score full marks.
 
     //How to use E.X.P.S.T.N?
-    // 1. Each "knock" must be paired with both a secret phrase and your unique S.E.C.R.E.T signature.
-    // 2. The correct format to send a knock: First, 4 bytes containing your S.E.C.R.E.T signature, followed by the secret phrase.
+    // 1. Each "secret_knock" must be paired with both a secret phrase and your unique S.E.C.R.E.T signature.
+    // 2. The correct format to send a secret_knock: First, 4 bytes containing your S.E.C.R.E.T signature, followed by the secret phrase.
 
     // Tip: To discover the secret ports and their associated phrases, start by solving challenges on the ports detected using your port scanner. Happy hunting!
  
@@ -550,6 +554,7 @@ int solve_puzzle_4(int sockfd, char* dst_ip, int dst_port) {
     // Construct secret port list
     std::string buffer = "4025,4094";
 
+    
 
     if (sendto(sockfd, &buffer, buffer.length(), 0 , (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Failed to send port list");
@@ -595,38 +600,79 @@ int port_knocker(int sockfd, char* dst_ip) {
     std::string secret_phrase = "Omae wa mou shindeiru";
     int signature = 0x3293dd49;
 
-    // Create knock
+    // Create secret_knock
     size_t knock_size = sizeof(signature) + secret_phrase.size();
-    char* knock = new char[knock_size];
-    memcpy(knock, &signature, sizeof(signature));
-    memcpy(knock + sizeof(signature), secret_phrase.c_str(), secret_phrase.size());
+    char* secret_knock = new char[knock_size];
+    memcpy(secret_knock, &signature, sizeof(signature));
+    memcpy(secret_knock + sizeof(signature), secret_phrase.c_str(), secret_phrase.size());
 
     // Construct addresses for the 2 secret ports
     struct sockaddr_in secret_addr_1;
     memset(&secret_addr_1, 0, sizeof(secret_addr_1));
     secret_addr_1.sin_family = AF_INET;
     secret_addr_1.sin_port = htons(4025);
+    if (inet_pton(AF_INET, dst_ip, &secret_addr_1.sin_addr) <= 0) {
+        perror("Invalid IP address provided.");
+        delete[] secret_knock;
+        return -1;
+    }
 
     struct sockaddr_in secret_addr_2;
     memset(&secret_addr_2, 0, sizeof(secret_addr_2));
     secret_addr_2.sin_family = AF_INET;
     secret_addr_2.sin_port = htons(4094);
-
-    // Create list for knocking sequence
-    sockaddr_in port_sequence[] =   {secret_addr_1, secret_addr_2, secret_addr_1, 
-                                    secret_addr_1, secret_addr_2, secret_addr_2};
-
-    for (int i = 0; i <= 6; i++) {
-        char* response = knock_on_port(sockfd, port_sequence[i], knock);
-        std::cout << "Response after knock: " << i << "\nRespnse: " << response << std::endl;
+    if (inet_pton(AF_INET, dst_ip, &secret_addr_2.sin_addr) <= 0) {
+        perror("Invalid IP");
+        delete[] secret_knock;
+        return -1;
     }
 
+    // Create list for knocking sequence
+    sockaddr_in port_sequence[] = {secret_addr_1, secret_addr_2, secret_addr_1, secret_addr_1, secret_addr_2, secret_addr_2};
 
+    for (int i = 0; i <= 5; i++) {
+        char* response = knock_on_port(sockfd, port_sequence[i], secret_knock, knock_size);
+        std::cout << "Response after knock: " << i << "\nResponse: " << response << std::endl;
+        delete[] response;  // Clean up the response buffer
+        sleep(2);
+    }
 
-    free(knock);
+ // See if we get response after sending knocks
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(sockfd, &read_fds);
+
+    struct timeval timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+
+    int ready_to_read = select(sockfd + 1, &read_fds, NULL, NULL, &timeout);
+    if (ready_to_read < 0) {
+        perror("Failed to select");
+        return -1;
+    }
+    if (ready_to_read == 0) {
+        perror("Select timeout");
+        return -1;
+    }
+
+    struct sockaddr_in recv_addr;
+    socklen_t recv_len = sizeof(recv_addr);
+
+    char recv_buffer[1024];
+
+    int received_bytes = recvfrom(sockfd, recv_buffer, sizeof(recv_buffer), 0, (struct sockaddr*)&recv_addr, &recv_len);
+    if (received_bytes > 0) {  
+        std::cout << "Response after sending knocks:\n" << recv_buffer << std::endl;
+    } else {
+        perror("Failed to receive from server.");
+        free(secret_knock);
+        return -1;
+    }
+
+    delete[] secret_knock;  // Clean up the secret_knock buffer
     return 1;
 }
-
 
 
 int main(int argc, char *argv[]) {
@@ -706,6 +752,13 @@ int main(int argc, char *argv[]) {
     if (solved_4 < 0) {
         std::cout << "Failed to solve puzzle 4" << std::endl;
     } 
+
+
+    // Last part
+    int port_knock = port_knocker(sockfd, ip_addr);
+    if (port_knock < 0) {
+        std::cout << "Port knocker failed" << std::endl;
+    }
     close(sockfd);
     return 0;
 }
